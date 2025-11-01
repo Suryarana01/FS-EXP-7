@@ -1,0 +1,319 @@
+{
+  "name": "realtime-chat-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
+// Simple Express + Socket.IO chat server
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
+import cors from "cors";
+
+const app = express();
+app.use(cors());
+app.get("/", (req, res) => res.send("Socket.IO Chat Server is running"));
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: "*" } // For local dev. Restrict origin in production.
+});
+
+// Keep track of users (socketId -> { username, room })
+const users = new Map();
+
+io.on("connection", (socket) => {
+  console.log("New socket connected:", socket.id);
+
+  // Join a room
+  socket.on("join", ({ username, room }, ack) => {
+    if (!username || !room) return ack({ status: "error", message: "Missing username or room" });
+    users.set(socket.id, { username, room });
+    socket.join(room);
+
+    // Notify user & room
+    socket.emit("systemMessage", { text: `Welcome ${username}!`, ts: Date.now() });
+    socket.to(room).emit("systemMessage", { text: `${username} has joined the room.`, ts: Date.now() });
+
+    // Send current users in room
+    const usersInRoom = Array.from(users.values())
+      .filter(u => u.room === room)
+      .map(u => u.username);
+
+    io.in(room).emit("roomUsers", usersInRoom);
+
+    ack({ status: "ok" });
+  });
+
+  // Chat message
+  socket.on("sendMessage", (message, ack) => {
+    const u = users.get(socket.id);
+    if (!u) return ack && ack({ status: "error", message: "Not in a room" });
+
+    const payload = {
+      username: u.username,
+      text: message,
+      ts: Date.now()
+    };
+    io.in(u.room).emit("message", payload);
+    ack && ack({ status: "ok" });
+  });
+
+  // Typing indicator
+  socket.on("typing", (isTyping) => {
+    const u = users.get(socket.id);
+    if (!u) return;
+    socket.to(u.room).emit("typing", { username: u.username, typing: isTyping });
+  });
+
+  // Leave / disconnect
+  const leaveRoom = () => {
+    const u = users.get(socket.id);
+    if (!u) return;
+    socket.leave(u.room);
+    users.delete(socket.id);
+    socket.to(u.room).emit("systemMessage", { text: `${u.username} has left the room.`, ts: Date.now() });
+
+    const usersInRoom = Array.from(users.values())
+      .filter(x => x.room === u.room)
+      .map(x => x.username);
+    io.in(u.room).emit("roomUsers", usersInRoom);
+  };
+
+  socket.on("leave", leaveRoom);
+
+  socket.on("disconnect", (reason) => {
+    console.log("Socket disconnected:", socket.id, reason);
+    leaveRoom();
+  });
+});
+
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => console.log(`Chat server listening on ${PORT}`));
+{
+  "name": "realtime-chat-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "socket.io-client": "^4.8.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build"
+  }
+}
+import React from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App";
+import "./index.css";
+
+const root = createRoot(document.getElementById("root"));
+root.render(<App />);
+import React from "react";
+import Chat from "./Chat";
+
+export default function App() {
+  return (
+    <div style={{ fontFamily: "Arial, sans-serif", padding: 20 }}>
+      <h1>Real-time Chat (Socket.IO)</h1>
+      <Chat />
+    </div>
+  );
+}
+import React, { useEffect, useRef, useState } from "react";
+import { io } from "socket.io-client";
+
+// Adjust server URL if different
+const SOCKET_URL = "http://localhost:5000";
+
+export default function Chat() {
+  const [socket, setSocket] = useState(null);
+  const [connected, setConnected] = useState(false);
+
+  const [username, setUsername] = useState("");
+  const [room, setRoom] = useState("general");
+  const [joined, setJoined] = useState(false);
+
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState([]); // { username?, text, ts, system? }
+  const [users, setUsers] = useState([]);
+  const [typingUsers, setTypingUsers] = useState({}); // username -> boolean
+
+  const typingTimeout = useRef(null);
+  const messageListRef = useRef();
+
+  useEffect(() => {
+    const s = io(SOCKET_URL, { transports: ["websocket"] });
+    setSocket(s);
+
+    s.on("connect", () => setConnected(true));
+    s.on("disconnect", () => setConnected(false));
+
+    s.on("message", (payload) => {
+      setMessages((m) => [...m, payload]);
+    });
+
+    s.on("systemMessage", (payload) => {
+      setMessages((m) => [...m, { ...payload, system: true }]);
+    });
+
+    s.on("roomUsers", (list) => {
+      setUsers(list);
+    });
+
+    s.on("typing", ({ username: u, typing }) => {
+      setTypingUsers((t) => ({ ...t, [u]: typing }));
+      if (!typing) {
+        // remove after small delay
+        setTimeout(() => setTypingUsers((t) => { const copy = { ...t }; delete copy[u]; return copy; }), 2500);
+      }
+    });
+
+    return () => s.disconnect();
+  }, []);
+
+  useEffect(() => {
+    // scroll to bottom when messages change
+    const el = messageListRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
+
+  const joinRoom = () => {
+    if (!socket) return;
+    if (!username.trim()) return alert("Enter a username");
+    socket.emit("join", { username: username.trim(), room }, (res) => {
+      if (res.status === "ok") {
+        setJoined(true);
+        setMessages([]);
+      } else {
+        alert(res.message || "Join failed");
+      }
+    });
+  };
+
+  const sendMessage = async (e) => {
+    e && e.preventDefault();
+    if (!message.trim()) return;
+    socket.emit("sendMessage", message.trim(), (ack) => {
+      if (ack?.status === "ok") {
+        setMessage("");
+        socket.emit("typing", false);
+      } else {
+        console.error("Message not delivered", ack);
+      }
+    });
+  };
+
+  const leave = () => {
+    socket && socket.emit("leave");
+    setJoined(false);
+    setUsers([]);
+    setMessages([]);
+  };
+
+  const handleTyping = (val) => {
+    setMessage(val);
+    if (!socket) return;
+    socket.emit("typing", true);
+    clearTimeout(typingTimeout.current);
+    typingTimeout.current = setTimeout(() => {
+      socket.emit("typing", false);
+    }, 700);
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 20 }}>
+      <div style={{ width: 320 }}>
+        <div style={{ marginBottom: 10 }}>
+          <strong>Connection:</strong> {connected ? "✅ Connected" : "❌ Disconnected"}
+        </div>
+
+        {!joined ? (
+          <div style={{ border: "1px solid #ddd", padding: 12, borderRadius: 6 }}>
+            <input
+              placeholder="Username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              style={{ width: "100%", marginBottom: 8, padding: 8 }}
+            />
+            <input
+              placeholder="Room (default: general)"
+              value={room}
+              onChange={(e) => setRoom(e.target.value)}
+              style={{ width: "100%", marginBottom: 8, padding: 8 }}
+            />
+            <button onClick={joinRoom} style={{ padding: "8px 12px" }}>Join Room</button>
+          </div>
+        ) : (
+          <div style={{ border: "1px solid #ddd", padding: 12, borderRadius: 6 }}>
+            <div style={{ marginBottom: 8 }}>
+              <strong>{username}</strong> in <em>{room}</em>
+            </div>
+            <button onClick={leave} style={{ padding: "6px 10px" }}>Leave</button>
+
+            <div style={{ marginTop: 12 }}>
+              <strong>Users</strong>
+              <ul>
+                {users.map((u) => (
+                  <li key={u}>{u} {typingUsers[u] ? " — typing…" : ""}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        <div ref={messageListRef} style={{ flex: 1, border: "1px solid #ddd", padding: 12, borderRadius: 6, overflowY: "auto", minHeight: 300 }}>
+          {messages.map((m, idx) => (
+            <div key={idx} style={{ marginBottom: 8 }}>
+              {m.system ? (
+                <div style={{ color: "#666", fontStyle: "italic", fontSize: 13 }}>{new Date(m.ts).toLocaleTimeString()} — {m.text}</div>
+              ) : (
+                <div>
+                  <strong>{m.username}</strong> <span style={{ color: "#999", fontSize: 12 }}>{new Date(m.ts).toLocaleTimeString()}</span>
+                  <div>{m.text}</div>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {!messages.length && <div style={{ color: "#888" }}>No messages yet. Join a room and say hi 👋</div>}
+        </div>
+
+        <form onSubmit={sendMessage} style={{ marginTop: 10, display: "flex", gap: 8 }}>
+          <input
+            value={message}
+            onChange={(e) => handleTyping(e.target.value)}
+            placeholder={joined ? "Type message..." : "Join a room to chat"}
+            disabled={!joined}
+            style={{ flex: 1, padding: 8, borderRadius: 6, border: "1px solid #ccc" }}
+          />
+          <button type="submit" disabled={!joined || !message.trim()} style={{ padding: "8px 12px" }}>Send</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+
+OUTPUT:
+Chat server listening on 5000
+New socket connected: xxxxx
+New socket connected: yyyyy
+Socket disconnected: xxxxx ping timeout
+
