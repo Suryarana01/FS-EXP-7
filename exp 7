@@ -1,0 +1,144 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "axios": "^1.7.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build"
+  },
+  "proxy": "http://localhost:5000"
+}
+REACT_APP_API_URL=http://localhost:5000/api
+import axios from "axios";
+
+const API = axios.create({
+  baseURL: process.env.REACT_APP_API_URL,
+});
+
+// Add JWT token to headers if available
+API.interceptors.request.use((req) => {
+  const token = localStorage.getItem("token");
+  if (token) req.headers.Authorization = `Bearer ${token}`;
+  return req;
+});
+
+export default API;
+import React, { useState } from "react";
+import API from "./api";
+
+function App() {
+  const [response, setResponse] = useState("");
+  const [amount, setAmount] = useState("");
+
+  const getBalance = async () => {
+    try {
+      const res = await API.get("/bank/balance");
+      setResponse(JSON.stringify(res.data, null, 2));
+    } catch (err) {
+      setResponse(err.response?.data?.message || err.message);
+    }
+  };
+
+  const deposit = async () => {
+    try {
+      const res = await API.post("/bank/deposit", { amount: Number(amount) });
+      setResponse(JSON.stringify(res.data, null, 2));
+    } catch (err) {
+      setResponse(err.response?.data?.message || err.message);
+    }
+  };
+
+  const withdraw = async () => {
+    try {
+      const res = await API.post("/bank/withdraw", { amount: Number(amount) });
+      setResponse(JSON.stringify(res.data, null, 2));
+    } catch (err) {
+      setResponse(err.response?.data?.message || err.message);
+    }
+  };
+
+  const login = async () => {
+    try {
+      const res = await API.post("/auth/login", {
+        email: "mahak@example.com",
+        password: "123456",
+      });
+      localStorage.setItem("token", res.data.token);
+      setResponse("Login successful, token stored!");
+    } catch (err) {
+      setResponse(err.response?.data?.message || err.message);
+    }
+  };
+
+  return (
+    <div style={{ padding: "20px", fontFamily: "sans-serif" }}>
+      <h1>🏦 Banking Dashboard</h1>
+      <button onClick={login}>Login</button>
+      <div>
+        <input
+          type="number"
+          value={amount}
+          placeholder="Enter amount"
+          onChange={(e) => setAmount(e.target.value)}
+          style={{ marginRight: "10px" }}
+        />
+        <button onClick={deposit}>Deposit</button>
+        <button onClick={withdraw}>Withdraw</button>
+      </div>
+      <button onClick={getBalance}>Check Balance</button>
+      <pre style={{ background: "#eee", padding: "10px", marginTop: "10px" }}>
+        {response}
+      </pre>
+    </div>
+  );
+}
+
+export default App;
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Banking App</title>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+
+OUTPUT:
+✅ Login
+nginx
+Login successful, token stored!
+✅ Deposit
+json
+{
+  "message": "Deposit successful",
+  "newBalance": 2000
+}
+✅ Withdraw
+json
+{
+  "message": "Withdrawal successful",
+  "newBalance": 1500
+}
+✅ Check Balance
+json
+{
+  "balance": 1500
+}
+If unauthorized:
+json
+{ "message": "Access denied, no token" }
