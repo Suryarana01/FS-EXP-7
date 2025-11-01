@@ -1,0 +1,151 @@
+{
+  "name": "redux-shopping-cart",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@reduxjs/toolkit": "^2.2.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-redux": "^9.1.0",
+    "react-scripts": "5.0.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build"
+  }
+}
+import { configureStore } from "@reduxjs/toolkit";
+import cartReducer from "../features/cartSlice";
+
+export const store = configureStore({
+  reducer: {
+    cart: cartReducer,
+  },
+});
+import { createSlice } from "@reduxjs/toolkit";
+
+const initialState = {
+  items: [],
+  totalAmount: 0,
+};
+
+const cartSlice = createSlice({
+  name: "cart",
+  initialState,
+  reducers: {
+    addItem: (state, action) => {
+      const existing = state.items.find(i => i.id === action.payload.id);
+      if (existing) {
+        existing.quantity += 1;
+      } else {
+        state.items.push({ ...action.payload, quantity: 1 });
+      }
+      state.totalAmount += action.payload.price;
+    },
+    removeItem: (state, action) => {
+      const existing = state.items.find(i => i.id === action.payload);
+      if (existing) {
+        state.totalAmount -= existing.price;
+        if (existing.quantity === 1) {
+          state.items = state.items.filter(i => i.id !== action.payload);
+        } else {
+          existing.quantity -= 1;
+        }
+      }
+    },
+    clearCart: (state) => {
+      state.items = [];
+      state.totalAmount = 0;
+    }
+  },
+});
+
+export const { addItem, removeItem, clearCart } = cartSlice.actions;
+export default cartSlice.reducer;
+import React from "react";
+import { useDispatch } from "react-redux";
+import { addItem } from "../features/cartSlice";
+
+const products = [
+  { id: 1, name: "iPhone 15", price: 1200 },
+  { id: 2, name: "MacBook Air", price: 1600 },
+  { id: 3, name: "Apple Watch", price: 500 },
+];
+
+const ProductList = () => {
+  const dispatch = useDispatch();
+
+  return (
+    <div className="product-list">
+      <h2>🛍️ Products</h2>
+      {products.map((p) => (
+        <div key={p.id} className="product">
+          <span>{p.name}</span>
+          <span>${p.price}</span>
+          <button onClick={() => dispatch(addItem(p))}>Add to Cart</button>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+export default ProductList;
+import React from "react";
+import { useSelector, useDispatch } from "react-redux";
+import { removeItem, clearCart } from "../features/cartSlice";
+
+const Cart = () => {
+  const { items, totalAmount } = useSelector((state) => state.cart);
+  const dispatch = useDispatch();
+
+  return (
+    <div className="cart">
+      <h2>🛒 Cart</h2>
+      {items.length === 0 ? (
+        <p>Cart is empty</p>
+      ) : (
+        <>
+          <ul>
+            {items.map((i) => (
+              <li key={i.id}>
+                {i.name} x{i.quantity} — ${i.price * i.quantity}
+                <button onClick={() => dispatch(removeItem(i.id))}>Remove</button>
+              </li>
+            ))}
+          </ul>
+          <h3>Total: ${totalAmount}</h3>
+          <button onClick={() => dispatch(clearCart())}>Clear Cart</button>
+        </>
+      )}
+    </div>
+  );
+};
+
+export default Cart;
+import React from "react";
+import ProductList from "./components/ProductList";
+import Cart from "./components/Cart";
+import "./App.css";
+
+function App() {
+  return (
+    <div className="App">
+      <h1>🛒 Redux Shopping Cart</h1>
+      <div className="container">
+        <ProductList />
+        <Cart />
+      </div>
+    </div>
+  );
+}
+
+export default App;
+
+
+OUTPUT:
+Compiled successfully!
+
+You can now view redux-shopping-cart in the browser.
+
+Local:            http://localhost:3000
+
